@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GitScope Profile Explorer</title>
+<meta name="description" content="Explore any public GitHub profile: repositories, stats, languages, activity and a contribution heatmap.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script>
+  /* Apply saved theme before paint */
+  try { const t = localStorage.getItem('gs-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<style>
+/* Layout: sticky toolbar, then a two-column profile view (identity rail + tabbed workspace) that stacks under 900px. shadcn/ui zinc tokens. */
+:root{
+  --background:0 0% 100%; --foreground:240 10% 3.9%;
+  --card:0 0% 100%; --muted:240 4.8% 95.9%; --muted-fg:240 3.8% 46.1%;
+  --border:240 5.9% 90%; --input:240 5.9% 90%;
+  --primary:240 5.9% 10%; --primary-fg:0 0% 98%;
+  --ring:240 5.9% 10%; --chart:221 83% 53%; --destructive:0 72% 51%; --warn:32 95% 44%;
+  --heat0:240 4.8% 93%; --heat1:141 60% 80%; --heat2:141 55% 60%; --heat3:141 60% 42%; --heat4:141 70% 28%;
+  --overlay:240 10% 3.9% / .5;
+  --radius:10px;
+  --font-sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --background:240 10% 3.9%; --foreground:0 0% 98%; --card:240 8% 6%; --muted:240 3.7% 15.9%; --muted-fg:240 5% 64.9%;
+  --border:240 3.7% 17%; --input:240 3.7% 20%; --primary:0 0% 98%; --primary-fg:240 5.9% 10%; --ring:240 4.9% 83.9%;
+  --chart:217 91% 62%; --destructive:0 72% 62%; --warn:38 92% 56%;
+  --heat0:240 4% 14%; --heat1:141 50% 18%; --heat2:141 55% 28%; --heat3:141 60% 40%; --heat4:141 70% 55%;
+  --overlay:0 0% 0% / .65; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --background:240 10% 3.9%; --foreground:0 0% 98%; --card:240 8% 6%; --muted:240 3.7% 15.9%; --muted-fg:240 5% 64.9%;
+  --border:240 3.7% 17%; --input:240 3.7% 20%; --primary:0 0% 98%; --primary-fg:240 5.9% 10%; --ring:240 4.9% 83.9%;
+  --chart:217 91% 62%; --destructive:0 72% 62%; --warn:38 92% 56%;
+  --heat0:240 4% 14%; --heat1:141 50% 18%; --heat2:141 55% 28%; --heat3:141 60% 40%; --heat4:141 70% 55%;
+  --overlay:0 0% 0% / .65; color-scheme:dark;}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0}
+body{background:hsl(var(--background));color:hsl(var(--foreground));font:14px/1.5 var(--font-sans);-webkit-font-smoothing:antialiased;min-height:100vh}
+a{color:inherit}
+img{max-width:100%}
+[hidden]{display:none!important}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}
+.mono{font-family:var(--font-mono)}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:hsl(var(--muted-fg))}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.wrap{max-width:1240px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+/* Header */
+header.top{position:sticky;top:0;z-index:30;background:hsl(var(--background) / .85);backdrop-filter:blur(10px);border-bottom:1px solid hsl(var(--border))}
+.top .wrap{display:flex;align-items:center;gap:12px;padding-block:10px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:-.01em;text-decoration:none;white-space:nowrap}
+.brand-mark{width:28px;height:28px;border-radius:8px;background:hsl(var(--primary));color:hsl(var(--primary-fg));display:grid;place-items:center}
+.search{flex:1 1 320px;display:flex;gap:8px;min-width:0;order:0}
+.field{position:relative;flex:1;min-width:0}
+.field svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:hsl(var(--muted-fg));pointer-events:none}
+.input{width:100%;height:36px;border:1px solid hsl(var(--input));background:transparent;border-radius:calc(var(--radius) - 2px);padding:0 12px;outline:none;transition:box-shadow .15s,border-color .15s}
+.input.has-icon{padding-left:34px;padding-right:40px}
+.input:focus{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring) / .15)}
+.kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:500 11px var(--font-mono);border:1px solid hsl(var(--border));border-radius:5px;padding:1px 6px;color:hsl(var(--muted-fg));background:hsl(var(--muted))}
+.actions{display:flex;align-items:center;gap:6px;margin-left:auto}
+@media (max-width:640px){.actions{order:1}.search{order:2;flex-basis:100%}}
+select.input{padding-right:28px;appearance:none;background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),linear-gradient(135deg,currentColor 50%,transparent 50%);background-position:calc(100% - 15px) 15px,calc(100% - 10px) 15px;background-size:5px 5px;background-repeat:no-repeat;cursor:pointer}
+select.input option{background:hsl(var(--card));color:hsl(var(--foreground))}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:calc(var(--radius) - 2px);border:1px solid transparent;font-weight:500;cursor:pointer;white-space:nowrap;text-decoration:none;transition:background .15s,opacity .15s}
+.btn-primary{background:hsl(var(--primary));color:hsl(var(--primary-fg))}
+.btn-primary:hover{opacity:.9}
+.btn-outline{border-color:hsl(var(--input));background:transparent}
+.btn-outline:hover,.btn-ghost:hover{background:hsl(var(--muted))}
+.btn-ghost{background:transparent}
+.btn-icon{width:36px;padding:0}
+.btn-sm{height:30px;padding:0 10px;font-size:13px}
+.btn[disabled]{opacity:.5;pointer-events:none}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-mono);border:1px solid hsl(var(--border));border-radius:999px;padding:3px 10px;color:hsl(var(--muted-fg));white-space:nowrap}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:hsl(141 60% 42%)}
+.pill.low .dot{background:hsl(var(--warn))}
+.pill.out .dot{background:hsl(var(--destructive))}
+
+/* Cards */
+.card{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:var(--radius)}
+.card-h{padding:16px 18px 0;display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.card-t{font-weight:600;font-size:14px;margin:0}
+.card-d{font-size:12.5px;color:hsl(var(--muted-fg));margin:2px 0 0}
+.card-b{padding:14px 18px 18px}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:500;border-radius:999px;padding:1px 9px;border:1px solid hsl(var(--border));white-space:nowrap}
+.badge-soft{background:hsl(var(--muted));border-color:transparent}
+.topic{font-size:12px;border-radius:999px;padding:1px 9px;background:hsl(var(--chart) / .12);color:hsl(var(--chart));font-weight:500}
+
+main{padding-block:24px 64px}
+
+/* Landing */
+.hero{display:grid;gap:10px;padding-block:28px 8px;max-width:720px}
+.hero h1{font-size:clamp(28px,4.5vw,40px);line-height:1.1;letter-spacing:-.03em;margin:0;text-wrap:balance}
+.hero p{margin:0;color:hsl(var(--muted-fg));font-size:15.5px;max-width:60ch}
+.section-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:hsl(var(--muted-fg));margin:32px 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.explore{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.ex{display:flex;align-items:center;gap:12px;padding:12px 14px;text-align:left;cursor:pointer;transition:border-color .15s,transform .15s;width:100%}
+.ex:hover{border-color:hsl(var(--ring) / .5);transform:translateY(-1px)}
+.ex img{width:40px;height:40px;border-radius:50%;background:hsl(var(--muted));flex:none}
+.ex b{display:block;font-weight:600}
+.ex span{display:block;font-size:12.5px;color:hsl(var(--muted-fg));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ex>div{min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:999px;border:1px solid hsl(var(--border));background:transparent;cursor:pointer;font-size:13px}
+.chip:hover{background:hsl(var(--muted))}
+.chip[aria-pressed="true"]{background:hsl(var(--primary));color:hsl(var(--primary-fg));border-color:transparent}
+.chip img{width:18px;height:18px;border-radius:50%}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.how .card{padding:16px}
+.how h3{margin:0 0 4px;font-size:14px}
+.how p{margin:0;font-size:13px;color:hsl(var(--muted-fg))}
+
+/* Profile layout */
+.layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)}}
+.rail{position:sticky;top:76px;display:grid;gap:16px}
+@media (max-width:900px){.rail{position:static}}
+.avatar{width:100%;max-width:260px;height:auto;aspect-ratio:1;object-fit:cover;flex:none;border-radius:50%;border:1px solid hsl(var(--border));background:hsl(var(--muted));display:block}
+@media (max-width:900px){.idtop{display:flex;gap:16px;align-items:center}.avatar{width:88px;max-width:88px}}
+.pname{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:14px 0 0;line-height:1.2;overflow-wrap:anywhere}
+@media (max-width:900px){.pname{margin-top:0}}
+.plogin{font-size:16px;color:hsl(var(--muted-fg));margin:0;overflow-wrap:anywhere}
+.bio{margin:12px 0 0;overflow-wrap:anywhere}
+.follow{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:hsl(var(--muted-fg))}
+.follow b{color:hsl(var(--foreground))}
+.facts{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:7px;font-size:13.5px}
+.facts li{display:flex;gap:8px;align-items:center;min-width:0}
+.facts li svg{flex:none;color:hsl(var(--muted-fg))}
+.facts li span,.facts li a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.facts a{text-decoration:none}.facts a:hover{text-decoration:underline}
+.rail-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.rail-actions .btn{flex:1}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+@media (max-width:1100px){.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:480px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.stat{padding:14px 16px}
+.stat .l{display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:hsl(var(--muted-fg));font-weight:500}
+.stat .v{font-size:24px;font-weight:650;letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums}
+.stat .h{font-size:11.5px;color:hsl(var(--muted-fg))}
+
+/* Tabs */
+.tabs{display:inline-flex;gap:2px;padding:3px;background:hsl(var(--muted));border-radius:var(--radius);margin:20px 0 16px;max-width:100%;overflow-x:auto}
+.tab{border:0;background:transparent;height:30px;padding:0 14px;border-radius:7px;cursor:pointer;font-weight:500;color:hsl(var(--muted-fg));white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.tab[aria-selected="true"]{background:hsl(var(--background));color:hsl(var(--foreground));box-shadow:0 1px 2px hsl(240 10% 3.9% / .12)}
+.tab .count{font:500 11px var(--font-mono);background:hsl(var(--border));border-radius:999px;padding:0 6px}
+
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:700px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.stack{display:grid;gap:16px}
+
+/* Donut */
+.donut-wrap{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.donut-wrap svg{flex:none}
+.legend{list-style:none;margin:0;padding:0;display:grid;gap:6px;flex:1;min-width:160px}
+.legend li{display:grid;grid-template-columns:10px 1fr auto;gap:8px;align-items:center;font-size:13px}
+.legend i{width:10px;height:10px;border-radius:3px;display:block}
+.legend .pct{font-family:var(--font-mono);font-size:12px;color:hsl(var(--muted-fg))}
+
+/* Bars */
+.bars{display:grid;gap:8px}
+.bar-row{display:grid;grid-template-columns:minmax(80px,140px) minmax(0,1fr) 56px;gap:10px;align-items:center;font-size:13px;cursor:pointer;border-radius:6px}
+.bar-row:hover .bar-name{text-decoration:underline}
+.bar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{height:10px;border-radius:3px;background:hsl(var(--muted));overflow:hidden}
+.bar-fill{height:100%;background:hsl(var(--chart));border-radius:3px 3px 3px 3px}
+.bar-v{text-align:right;font-family:var(--font-mono);font-size:12px;color:hsl(var(--muted-fg))}
+
+/* Heatmap */
+.heat-scroll{overflow-x:auto;padding-bottom:4px}
+.heat-scroll svg text{fill:hsl(var(--muted-fg));font:10px var(--font-sans)}
+.heat-legend{display:flex;align-items:center;gap:4px;font-size:11.5px;color:hsl(var(--muted-fg));justify-content:flex-end;margin-top:8px}
+.heat-legend i{width:10px;height:10px;border-radius:2px;display:block}
+.heat-sum{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin-bottom:12px}
+.heat-sum b{font-variant-numeric:tabular-nums}
+
+/* Highlights */
+.hl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:560px){.hl{grid-template-columns:minmax(0,1fr)}}
+
+/* Repo cards */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.toolbar .field{flex:1 1 220px}
+.toolbar select{width:auto;min-width:130px}
+.check{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none}
+.check input{accent-color:hsl(var(--primary));width:15px;height:15px}
+.repos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:760px){.repos{grid-template-columns:minmax(0,1fr)}}
+.repo{display:flex;flex-direction:column;gap:8px;padding:14px 16px;text-align:left;cursor:pointer;width:100%;transition:border-color .15s;min-width:0}
+.repo:hover{border-color:hsl(var(--ring) / .45)}
+.repo-h{display:flex;align-items:center;gap:8px;min-width:0}
+.repo-n{font-weight:600;color:hsl(var(--chart));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repo-d{font-size:13px;color:hsl(var(--muted-fg));margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.repo-topics{display:flex;flex-wrap:wrap;gap:5px}
+.meta{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:hsl(var(--muted-fg));margin-top:auto;align-items:center}
+.meta span{display:inline-flex;align-items:center;gap:4px}
+.ldot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.result-line{font-size:12.5px;color:hsl(var(--muted-fg));margin:0 0 10px}
+
+/* Activity */
+.feed{list-style:none;margin:0;padding:0;display:grid}
+.ev{display:grid;grid-template-columns:32px minmax(0,1fr) auto;gap:12px;padding:12px 0;border-bottom:1px solid hsl(var(--border))}
+.ev:last-child{border-bottom:0}
+.ev-i{width:32px;height:32px;border-radius:50%;background:hsl(var(--muted));display:grid;place-items:center;color:hsl(var(--muted-fg))}
+.ev-t{font-size:13.5px;overflow-wrap:anywhere}
+.ev-t a{font-weight:500;text-decoration:none}.ev-t a:hover{text-decoration:underline}
+.ev-t code,.commit code{font:12px var(--font-mono);background:hsl(var(--muted));padding:1px 5px;border-radius:4px}
+.ev-time{font-size:12px;color:hsl(var(--muted-fg));white-space:nowrap}
+.commits{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:3px}
+.commit{display:flex;gap:8px;font-size:12.5px;color:hsl(var(--muted-fg));min-width:0}
+.commit a{flex:none}
+.commit span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
+/* States */
+.state{padding:40px 24px;text-align:center;display:grid;justify-items:center;gap:8px}
+.state .ic{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;background:hsl(var(--muted));color:hsl(var(--muted-fg))}
+.state.err .ic{background:hsl(var(--destructive) / .12);color:hsl(var(--destructive))}
+.state.warn .ic{background:hsl(var(--warn) / .14);color:hsl(var(--warn))}
+.state h2{margin:6px 0 0;font-size:18px;letter-spacing:-.01em}
+.state p{margin:0;color:hsl(var(--muted-fg));max-width:52ch}
+.state .chips{justify-content:center;margin-top:8px}
+.sk{background:hsl(var(--muted));border-radius:6px;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}*{transition:none!important}}
+
+/* Sheet / dialog */
+.overlay{position:fixed;inset:0;background:hsl(var(--overlay));z-index:50;opacity:0;transition:opacity .2s}
+.overlay.open{opacity:1}
+.sheet{position:fixed;top:0;right:0;bottom:0;width:min(760px,100vw);background:hsl(var(--background));border-left:1px solid hsl(var(--border));z-index:51;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+.sheet.open{transform:none}
+.sheet-h{padding:18px 20px;border-bottom:1px solid hsl(var(--border));display:flex;gap:12px;align-items:flex-start}
+.sheet-h h2{margin:0;font-size:18px;letter-spacing:-.01em;overflow-wrap:anywhere}
+.sheet-b{overflow-y:auto;padding:18px 20px 40px;display:grid;gap:18px;align-content:start}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.kv div{border:1px solid hsl(var(--border));border-radius:8px;padding:8px 12px;min-width:0}
+.kv dt{font-size:11.5px;color:hsl(var(--muted-fg));text-transform:uppercase;letter-spacing:.05em}
+.kv dd{margin:2px 0 0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dialog{position:fixed;left:50%;top:50%;transform:translate(-50%,-48%);opacity:0;width:min(460px,calc(100vw - 32px));z-index:51;padding:22px;transition:opacity .2s,transform .2s;box-shadow:0 20px 50px hsl(240 10% 3.9% / .25)}
+.dialog.open{opacity:1;transform:translate(-50%,-50%)}
+.dialog h2{margin:0 0 4px;font-size:17px}
+.dialog p{margin:0 0 14px;color:hsl(var(--muted-fg));font-size:13.5px}
+.dialog .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));right:calc(20px + env(safe-area-inset-right,0px));z-index:60;padding:10px 14px;font-size:13.5px;box-shadow:0 10px 30px hsl(240 10% 3.9% / .2);display:flex;gap:8px;align-items:center;max-width:calc(100vw - 40px)}
+
+/* README markdown */
+.md{font-size:14.5px;line-height:1.65;overflow-wrap:anywhere;min-width:0}
+.md h1,.md h2{border-bottom:1px solid hsl(var(--border));padding-bottom:.3em}
+.md h1{font-size:1.7em;margin:.4em 0 .6em}.md h2{font-size:1.35em;margin:1.4em 0 .6em}.md h3{font-size:1.12em;margin:1.2em 0 .5em}
+.md a{color:hsl(var(--chart))}
+.md code{font:85% var(--font-mono);background:hsl(var(--muted));padding:.15em .4em;border-radius:5px}
+.md pre{background:hsl(var(--muted));padding:14px;border-radius:8px;overflow-x:auto}
+.md pre code{background:none;padding:0}
+.md blockquote{margin:0;padding:0 1em;border-left:3px solid hsl(var(--border));color:hsl(var(--muted-fg))}
+.md table{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%}
+.md th,.md td{border:1px solid hsl(var(--border));padding:6px 12px}
+.md img{max-width:100%;height:auto;background:transparent}
+.md hr{border:0;border-top:1px solid hsl(var(--border))}
+.md .anchor,.md .octicon{display:none}
+footer{border-top:1px solid hsl(var(--border));padding-block:20px;font-size:12.5px;color:hsl(var(--muted-fg))}
+footer .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="?" data-action="home" aria-label="GitScope home">
+      <span class="brand-mark" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/><path d="M11 8v6M8 11h6"/></svg></span>
+      GitScope
+    </a>
+    <form class="search" id="search-form" role="search" autocomplete="off">
+      <label class="field">
+        <span class="sr-only">GitHub username</span>
+        <span data-icon="search" data-size="16"></span>
+        <input class="input has-icon" id="q" name="q" type="search" placeholder="Search a GitHub username…" list="recent-list" spellcheck="false" autocapitalize="off" maxlength="39">
+        <span class="kbd" aria-hidden="true">/</span>
+      </label>
+      <datalist id="recent-list"></datalist>
+      <button class="btn btn-primary" type="submit">Explore</button>
+    </form>
+    <div class="actions">
+      <span class="pill" id="rate" title="GitHub API requests left this hour" hidden><span class="dot"></span><span id="rate-text"></span></span>
+      <button class="btn btn-ghost btn-icon" id="token-btn" type="button" aria-label="Add GitHub token" title="GitHub token"><span data-icon="key" data-size="16"></span></button>
+      <button class="btn btn-ghost btn-icon" id="theme-btn" type="button" aria-label="Toggle dark mode" title="Toggle theme"><span data-icon="moon" data-size="16" id="theme-ic"></span></button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" id="main" tabindex="-1" aria-live="polite"></main>
+
+<footer><div class="wrap"><span>Live data from the GitHub public REST API, fetched in your browser.</span><span>Press <span class="mono">/</span> to search · <span class="mono">Esc</span> to close panels</span></div></footer>
+
+<div class="overlay" id="overlay" hidden></div>
+<aside class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden></aside>
+<section class="dialog card" id="token-dialog" role="dialog" aria-modal="true" aria-labelledby="token-title" hidden>
+  <h2 id="token-title">GitHub access token</h2>
+  <p>Anonymous requests are limited to 60 per hour. A token raises that to 5,000. Create a fine-grained token with no extra permissions; it is kept only in this browser and sent only to api.github.com.</p>
+  <label for="token-input" class="sr-only">Token</label>
+  <input class="input mono" id="token-input" type="password" placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false">
+  <p style="margin:10px 0 0;font-size:12.5px"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a token on GitHub</a></p>
+  <div class="row">
+    <button class="btn btn-ghost" type="button" id="token-remove">Remove token</button>
+    <button class="btn btn-outline" type="button" id="token-cancel">Cancel</button>
+    <button class="btn btn-primary" type="button" id="token-save">Save token</button>
+  </div>
+</section>
+<div class="toast card" id="toast" role="status" hidden></div>
+
+<script>
+(() => {
+'use strict';
+const API = 'https://api.github.com';
+const MAX_REPO_PAGES = 5;      // up to 500 repos
+const EVENT_PAGES = 3;         // GitHub serves at most 300 events / 90 days
+const CACHE_TTL = 10 * 60 * 1000;
+const HEAT_WEEKS = 20;
+
+/* ---------- icons (lucide-style) ---------- */
+const ICONS = {
+  search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  star:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  fork:'<circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/>',
+  eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  issue:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/>',
+  users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  pin:'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  building:'<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>',
+  link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  at:'<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+  mail:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-14.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+  moon:'<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  key:'<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+  x:'<path d="M18 6 6 18M6 6l12 12"/>',
+  external:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  commit:'<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>',
+  pr:'<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/>',
+  tag:'<path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.41 0l8.59-8.59a1 1 0 0 0 0-1.41Z"/><circle cx="7" cy="7" r="1.5"/>',
+  branch:'<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+  copy:'<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  history:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/>',
+  message:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  user:'<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+  trash:'<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  rocket:'<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>',
+  scale:'<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>',
+  wifi:'<path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.86a10 10 0 0 1 14 0M8.5 16.43a5 5 0 0 1 7 0"/>'
+};
+const icon = (n, s = 16, cls = '') => `<svg class="${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+const hydrateIcons = (root = document) => root.querySelectorAll('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon, +el.dataset.size || 16); });
+hydrateIcons();
+
+/* ---------- utils ---------- */
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nf = new Intl.NumberFormat();
+const compact = n => n >= 10000 ? new Intl.NumberFormat(undefined, {notation:'compact', maximumFractionDigits:1}).format(n) : nf.format(n);
+const rtf = new Intl.RelativeTimeFormat(undefined, {numeric:'auto'});
+function ago(iso) {
+  const d = (new Date(iso) - Date.now()) / 1000;
+  const units = [['year',31536000],['month',2592000],['week',604800],['day',86400],['hour',3600],['minute',60]];
+  for (const [u, s] of units) if (Math.abs(d) >= s) return rtf.format(Math.round(d / s), u);
+  return 'just now';
+}
+const fmtDate = iso => new Date(iso).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+const store = {
+  get(k, f) { try { const v = localStorage.getItem(k); return v == null ? f : JSON.parse(v); } catch (e) { return f; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const LOGIN_RE = /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/i;
+
+const LANG_COLORS = {JavaScript:'#f1e05a',TypeScript:'#3178c6',Python:'#3572A5',Go:'#00ADD8',Rust:'#dea584',C:'#7a7a7a','C++':'#f34b7d',Java:'#b07219',Ruby:'#701516',Shell:'#89e051',HTML:'#e34c26',CSS:'#663399',Vue:'#41b883',PHP:'#4F5D95',Swift:'#F05138',Kotlin:'#A97BFF','C#':'#178600','Jupyter Notebook':'#DA5B0B',Dart:'#00B4AB',Lua:'#3d3dc4',Elixir:'#6e4a7e',Haskell:'#5e5086',Scala:'#c22d40','Objective-C':'#438eff',Makefile:'#427819',Dockerfile:'#5b7f8c',Nix:'#7e7eff',Zig:'#ec915c',Svelte:'#ff3e00',Assembly:'#8a6a3a',Perl:'#0298c3',R:'#198CE7',Clojure:'#db5855','Vim Script':'#199f4b','Emacs Lisp':'#c065db',TeX:'#4f7d2a',MDX:'#fcb32c',SCSS:'#c6538c',Astro:'#ff5a03',OCaml:'#ef7a08',Julia:'#a270ba',Erlang:'#B83998',Groovy:'#4298b8',PowerShell:'#2f6fb0',Solidity:'#AA6746',HCL:'#844FBA',MATLAB:'#e16737',Roff:'#ecdebe',Starlark:'#76d275'};
+function langColor(l) {
+  if (!l) return 'hsl(240 4% 60%)';
+  if (LANG_COLORS[l]) return LANG_COLORS[l];
+  let h = 0; for (const c of l) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h} 55% 55%)`;
+}
+
+/* ---------- state ---------- */
+const S = {
+  token: store.get('gs-token', ''),
+  recent: store.get('gs-recent', []),
+  user: null, repos: [], events: [], reposTruncated: false,
+  tab: 'overview', q: '', sort: 'stars', lang: '', hideForks: false, evFilter: 'all',
+  loadId: 0, lastFocus: null
+};
+const mem = new Map();
+
+/* ---------- API ---------- */
+function updateRate(h) {
+  const rem = h.get('x-ratelimit-remaining'), lim = h.get('x-ratelimit-limit');
+  if (rem == null) return;
+  const pill = $('#rate'); pill.hidden = false;
+  $('#rate-text').textContent = `${rem}/${lim}`;
+  pill.classList.toggle('low', +rem > 0 && +rem < +lim * 0.2);
+  pill.classList.toggle('out', +rem === 0);
+  const reset = h.get('x-ratelimit-reset');
+  pill.title = `GitHub API: ${rem} of ${lim} requests left` + (reset ? `, resets ${new Date(reset * 1000).toLocaleTimeString()}` : '');
+}
+async function gh(path, {accept, text} = {}) {
+  const url = path.startsWith('http') ? path : API + path;
+  const key = (accept || '') + '|' + url + '|' + (S.token ? 't' : 'a');
+  const hit = mem.get(key);
+  if (hit && Date.now() - hit.t < CACHE_TTL) return hit.v;
+  try { const ss = sessionStorage.getItem('gs:' + key); if (ss) { const o = JSON.parse(ss); if (Date.now() - o.t < CACHE_TTL) { mem.set(key, o); return o.v; } } } catch (e) {}
+  const headers = {Accept: accept || 'application/vnd.github+json'};
+  if (S.token) headers.Authorization = `Bearer ${S.token}`;
+  let res;
+  try { res = await fetch(url, {headers}); }
+  catch (e) { const err = new Error('Network error'); err.kind = 'network'; throw err; }
+  updateRate(res.headers);
+  if (!res.ok) {
+    const err = new Error('HTTP ' + res.status); err.status = res.status;
+    err.remaining = res.headers.get('x-ratelimit-remaining');
+    err.reset = res.headers.get('x-ratelimit-reset');
+    try { err.body = (await res.json()).message; } catch (e) {}
+    if ((res.status === 403 || res.status === 429) && (err.remaining === '0' || /rate limit/i.test(err.body || ''))) err.kind = 'rate';
+    else if (res.status === 401) err.kind = 'auth';
+    else if (res.status === 404) err.kind = 'notfound';
+    throw err;
+  }
+  const v = {data: text ? await res.text() : await res.json(), link: res.headers.get('link') || ''};
+  const o = {t: Date.now(), v}; mem.set(key, o);
+  try { const s = JSON.stringify(o); if (s.length < 1500000) sessionStorage.setItem('gs:' + key, s); } catch (e) {}
+  return v;
+}
+async function fetchRepos(login) {
+  let all = [], truncated = false;
+  for (let p = 1; p <= MAX_REPO_PAGES; p++) {
+    const {data, link} = await gh(`/users/${login}/repos?per_page=100&page=${p}&sort=pushed`);
+    all = all.concat(data);
+    if (data.length < 100 || !/rel="next"/.test(link)) break;
+    if (p === MAX_REPO_PAGES) truncated = true;
+  }
+  return {all, truncated};
+}
+async function fetchEvents(login) {
+  let all = [];
+  for (let p = 1; p <= EVENT_PAGES; p++) {
+    try {
+      const {data, link} = await gh(`/users/${login}/events/public?per_page=100&page=${p}`);
+      all = all.concat(data);
+      if (data.length < 100 || !/rel="next"/.test(link)) break;
+    } catch (e) { if (p === 1) throw e; break; }
+  }
+  return all;
+}
+
+/* ---------- recent searches ---------- */
+function addRecent(u) {
+  S.recent = [{login: u.login, avatar: u.avatar_url, name: u.name || ''}, ...S.recent.filter(r => r.login.toLowerCase() !== u.login.toLowerCase())].slice(0, 10);
+  store.set('gs-recent', S.recent); renderDatalist();
+}
+function renderDatalist() { $('#recent-list').innerHTML = S.recent.map(r => `<option value="${esc(r.login)}">${esc(r.name)}</option>`).join(''); }
+
+/* ---------- routing ---------- */
+function getParamUser() {
+  const p = new URLSearchParams(location.search).get('user');
+  if (p) return p.trim();
+  const h = decodeURIComponent(location.hash.slice(1)).replace(/^user=/, '').trim();
+  return LOGIN_RE.test(h) ? h : '';
+}
+function setUrl(login, push = true) {
+  try {
+    const u = new URL(location.href);
+    if (login) u.searchParams.set('user', login); else u.searchParams.delete('user');
+    u.hash = '';
+    if (u.href !== location.href) history[push ? 'pushState' : 'replaceState']({}, '', u);
+  } catch (e) { try { location.hash = login || ''; } catch (_) {} }
+}
+function shareUrl(login) {
+  try { const u = new URL(location.href); u.search = ''; u.hash = ''; u.searchParams.set('user', login); return u.href; } catch (e) { return `https://github.com/${login}`; }
+}
+window.addEventListener('popstate', () => { const u = getParamUser(); u ? loadUser(u, {push: false}) : renderHome(); });
+
+/* ---------- rendering: home ---------- */
+const EXPLORE = [
+  ['torvalds', 'Creator of Linux and Git'],
+  ['gaearon', 'React core, co-created Redux'],
+  ['yyx990803', 'Creator of Vue.js and Vite'],
+  ['sindresorhus', 'Prolific open-source maintainer'],
+  ['karpathy', 'AI researcher, nanoGPT'],
+  ['tj', 'Express, Koa and many Node libs'],
+  ['kentcdodds', 'Testing Library, educator'],
+  ['microsoft', 'Organization account']
+];
+function renderHome() {
+  S.user = null; document.title = 'GitScope Profile Explorer';
+  const recent = S.recent.length ? `
+    <div class="section-label"><span>Recent searches</span><button class="btn btn-ghost btn-sm" data-action="clear-recent">${icon('trash', 14)} Clear</button></div>
+    <div class="chips">${S.recent.map(r => `<button class="chip" data-user="${esc(r.login)}"><img src="${esc(r.avatar)}&s=40" alt="" loading="lazy">${esc(r.login)}</button>`).join('')}</div>` : '';
+  $('#main').innerHTML = `
+    <section class="hero">
+      <h1>Look inside any GitHub profile</h1>
+      <p>Type a username to see their repositories, star totals, language mix, recent public activity and a contribution heatmap, all pulled live from GitHub.</p>
+    </section>
+    ${recent}
+    <div class="section-label"><span>Try a notable profile</span></div>
+    <div class="explore">${EXPLORE.map(([l, d]) => `
+      <button class="card ex" data-user="${l}"><img src="https://github.com/${l}.png?size=80" alt="" loading="lazy"><div><b>${l}</b><span>${esc(d)}</span></div></button>`).join('')}
+    </div>
+    <div class="section-label"><span>What you get</span></div>
+    <div class="how">
+      <div class="card"><h3>Profile and stats</h3><p>Bio, links, followers and totals for stars, forks and open issues across every public repo.</p></div>
+      <div class="card"><h3>Repository browser</h3><p>Search, sort and filter by language. Open any repo to read its README.</p></div>
+      <div class="card"><h3>Activity and heatmap</h3><p>Pushes, pull requests, issues, stars and releases from the last 90 days of public events.</p></div>
+      <div class="card"><h3>Shareable links</h3><p>Every profile has a link like <span class="mono">?user=torvalds</span> you can send to someone.</p></div>
+    </div>`;
+}
+
+/* ---------- rendering: loading / errors ---------- */
+function renderSkeleton() {
+  const tiles = Array.from({length: 6}, () => `<div class="card stat"><div class="sk" style="height:12px;width:60%"></div><div class="sk" style="height:26px;width:50%;margin-top:10px"></div></div>`).join('');
+  $('#main').innerHTML = `<div class="layout" aria-busy="true">
+    <div class="rail"><div class="sk" style="aspect-ratio:1;border-radius:50%;max-width:260px"></div><div class="sk" style="height:22px;width:70%"></div><div class="sk" style="height:14px;width:45%"></div><div class="sk" style="height:56px"></div><div class="sk" style="height:90px"></div></div>
+    <div class="stack"><div class="stats">${tiles}</div><div class="sk" style="height:34px;width:300px;max-width:100%"></div>
+    <div class="grid2"><div class="sk" style="height:220px"></div><div class="sk" style="height:220px"></div></div><div class="sk" style="height:180px"></div></div></div>
+    <span class="sr-only">Loading profile…</span>`;
+}
+function stateBlock({tone = '', ic = 'alert', title, body, actions = ''}) {
+  return `<div class="card state ${tone}"><div class="ic">${icon(ic, 22)}</div><h2>${title}</h2><p>${body}</p>${actions}</div>`;
+}
+function renderError(err, login) {
+  let html;
+  if (err.kind === 'notfound') {
+    html = stateBlock({tone: 'err', ic: 'user', title: `No GitHub user called “${esc(login)}”`,
+      body: 'Check the spelling, or try one of these profiles instead.',
+      actions: `<div class="chips">${EXPLORE.slice(0, 5).map(([l]) => `<button class="chip" data-user="${l}">${l}</button>`).join('')}</div>`});
+  } else if (err.kind === 'rate') {
+    const t = err.reset ? new Date(err.reset * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : 'within the hour';
+    html = stateBlock({tone: 'warn', ic: 'clock', title: 'GitHub API limit reached',
+      body: `${S.token ? 'Your token has' : 'Anonymous browsing has'} used up its hourly requests. The limit resets at ${esc(t)}.${S.token ? '' : ' Add a personal access token to get 5,000 requests per hour.'}`,
+      actions: `<div class="chips">${S.token ? '' : `<button class="btn btn-primary" data-action="token">${icon('key', 15)} Add a token</button>`}<button class="btn btn-outline" data-action="retry" data-login="${esc(login)}">Try again</button></div>`});
+  } else if (err.kind === 'auth') {
+    html = stateBlock({tone: 'err', ic: 'key', title: 'GitHub rejected your token',
+      body: 'The saved token is invalid or expired. Replace it or remove it to browse anonymously.',
+      actions: `<div class="chips"><button class="btn btn-primary" data-action="token">Update token</button></div>`});
+  } else {
+    html = stateBlock({tone: 'err', ic: err.kind === 'network' ? 'wifi' : 'alert', title: err.kind === 'network' ? 'Can’t reach GitHub' : 'Something went wrong',
+      body: err.kind === 'network' ? 'Check your internet connection, then try again. Some networks or extensions block api.github.com.' : esc(err.body || err.message),
+      actions: `<div class="chips"><button class="btn btn-outline" data-action="retry" data-login="${esc(login)}">Try again</button></div>`});
+  }
+  $('#main').innerHTML = html;
+}
+
+/* ---------- load ---------- */
+async function loadUser(raw, {push = true} = {}) {
+  const login = String(raw || '').trim().replace(/^@/, '').replace(/^https?:\/\/github\.com\//i, '').split(/[/?#]/)[0];
+  if (!login) return;
+  $('#q').value = login;
+  if (!LOGIN_RE.test(login)) { renderError({kind: 'notfound'}, login); return; }
+  const id = ++S.loadId;
+  setUrl(login, push);
+  closeSheet(true);
+  renderSkeleton();
+  try {
+    const {data: user} = await gh(`/users/${login}`);
+    if (id !== S.loadId) return;
+    const [repoRes, evRes] = await Promise.allSettled([fetchRepos(user.login), fetchEvents(user.login)]);
+    if (id !== S.loadId) return;
+    if (repoRes.status === 'rejected' && repoRes.reason.kind === 'rate') throw repoRes.reason;
+    S.user = user;
+    S.repos = repoRes.status === 'fulfilled' ? repoRes.value.all : [];
+    S.reposTruncated = repoRes.status === 'fulfilled' && repoRes.value.truncated;
+    S.reposError = repoRes.status === 'rejected' ? repoRes.reason : null;
+    S.events = evRes.status === 'fulfilled' ? evRes.value : [];
+    S.eventsError = evRes.status === 'rejected' ? evRes.reason : null;
+    S.q = ''; S.lang = ''; S.sort = 'stars'; S.evFilter = 'all'; S.hideForks = false;
+    if (user.login !== login) setUrl(user.login, false);
+    addRecent(user);
+    document.title = `${user.login} · GitScope`;
+    renderProfile();
+  } catch (err) {
+    if (id !== S.loadId) return;
+    renderError(err, login);
+  }
+}
+
+/* ---------- aggregates ---------- */
+function aggregates() {
+  const own = S.repos;
+  const sum = k => own.reduce((a, r) => a + (r[k] || 0), 0);
+  const langs = {};
+  own.forEach(r => { if (r.language) langs[r.language] = (langs[r.language] || 0) + 1; });
+  return {stars: sum('stargazers_count'), forks: sum('forks_count'), watchers: sum('watchers_count'), issues: sum('open_issues_count'),
+    langs: Object.entries(langs).sort((a, b) => b[1] - a[1])};
+}
+
+/* ---------- rendering: profile ---------- */
+function renderProfile() {
+  const u = S.user, a = aggregates();
+  const blog = u.blog ? (/^https?:\/\//i.test(u.blog) ? u.blog : 'https://' + u.blog) : '';
+  const facts = [
+    u.company && `<li>${icon('building', 15)}<span>${esc(u.company)}</span></li>`,
+    u.location && `<li>${icon('pin', 15)}<span>${esc(u.location)}</span></li>`,
+    blog && `<li>${icon('link', 15)}<a href="${esc(blog)}" target="_blank" rel="noopener nofollow">${esc(u.blog.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a></li>`,
+    u.twitter_username && `<li>${icon('at', 15)}<a href="https://x.com/${esc(u.twitter_username)}" target="_blank" rel="noopener">@${esc(u.twitter_username)}</a></li>`,
+    u.email && `<li>${icon('mail', 15)}<span class="sel">${esc(u.email)}</span></li>`,
+    `<li>${icon('calendar', 15)}<span>Joined ${fmtDate(u.created_at)}</span></li>`
+  ].filter(Boolean).join('');
+  const badges = [u.type === 'Organization' && '<span class="badge badge-soft">Organization</span>', u.hireable && '<span class="badge badge-soft">Open to work</span>', u.site_admin && '<span class="badge badge-soft">GitHub staff</span>'].filter(Boolean).join(' ');
+  const tile = (l, ic, v, h = '') => `<div class="card stat"><div class="l"><span>${l}</span>${icon(ic, 14)}</div><div class="v" title="${nf.format(v)}">${compact(v)}</div>${h ? `<div class="h">${h}</div>` : ''}</div>`;
+  const repoNote = S.reposTruncated ? `first ${S.repos.length} of ${nf.format(u.public_repos)}` : 'across public repos';
+  $('#main').innerHTML = `
+  <div class="layout">
+    <aside class="rail" aria-label="Profile">
+      <div>
+        <div class="idtop">
+          <img class="avatar" src="${esc(u.avatar_url)}&s=520" alt="Avatar of ${esc(u.login)}" width="260" height="260">
+          <div style="min-width:0">
+            <h1 class="pname">${esc(u.name || u.login)}</h1>
+            <p class="plogin mono">${esc(u.login)}</p>
+            ${badges ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">${badges}</div>` : ''}
+          </div>
+        </div>
+        ${u.bio ? `<p class="bio">${esc(u.bio)}</p>` : ''}
+        <div class="follow">${icon('users', 15)}<span><b class="num">${compact(u.followers)}</b> followers</span><span><b class="num">${compact(u.following)}</b> following</span></div>
+        <ul class="facts">${facts}</ul>
+        <div class="rail-actions">
+          <a class="btn btn-outline btn-sm" href="${esc(u.html_url)}" target="_blank" rel="noopener">${icon('external', 14)} GitHub</a>
+          <button class="btn btn-outline btn-sm" data-action="copy-link">${icon('copy', 14)} Copy link</button>
+        </div>
+      </div>
+    </aside>
+    <section style="min-width:0" aria-label="Profile details">
+      <div class="stats">
+        ${tile('Total stars', 'star', a.stars, repoNote)}
+        ${tile('Forks', 'fork', a.forks, 'of their repos')}
+        ${tile('Watchers', 'eye', a.watchers, 'as reported by repo list')}
+        ${tile('Open issues', 'issue', a.issues, 'incl. pull requests')}
+        ${tile('Public repos', 'book', u.public_repos, `${nf.format(u.public_gists)} gists`)}
+        ${tile('Followers', 'users', u.followers, `following ${compact(u.following)}`)}
+      </div>
+      <div class="tabs" role="tablist" aria-label="Profile sections">
+        ${[['overview', 'Overview'], ['repos', 'Repositories', S.repos.length], ['activity', 'Activity', S.events.length]].map(([k, l, c]) =>
+          `<button class="tab" role="tab" id="tab-${k}" aria-controls="panel" aria-selected="${S.tab === k}" tabindex="${S.tab === k ? 0 : -1}" data-tab="${k}">${l}${c != null ? `<span class="count">${c}</span>` : ''}</button>`).join('')}
+      </div>
+      <div id="panel" role="tabpanel" aria-labelledby="tab-${S.tab}"></div>
+    </section>
+  </div>`;
+  renderPanel();
+}
+function renderPanel() {
+  const p = $('#panel'); if (!p) return;
+  p.setAttribute('aria-labelledby', 'tab-' + S.tab);
+  document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === S.tab; t.setAttribute('aria-selected', on); t.tabIndex = on ? 0 : -1; });
+  if (S.tab === 'overview') p.innerHTML = overviewHTML();
+  else if (S.tab === 'repos') { p.innerHTML = reposShellHTML(); renderRepoList(); }
+  else { p.innerHTML = activityShellHTML(); renderFeed(); }
+}
+
+/* ---------- overview ---------- */
+function overviewHTML() {
+  const a = aggregates();
+  const top = [...S.repos].filter(r => !r.fork).sort((x, y) => y.stargazers_count - x.stargazers_count);
+  const highlights = (top.length ? top : S.repos).slice(0, 4);
+  const emptyRepos = !S.repos.length;
+  return `<div class="stack">
+    <div class="card">
+      <div class="card-h"><div><h2 class="card-t">Contribution activity</h2><p class="card-d">Public events over the last ${HEAT_WEEKS} weeks. GitHub only exposes about 90 days of events.</p></div></div>
+      <div class="card-b">${heatmapHTML()}</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><div class="card-h"><div><h2 class="card-t">Languages</h2><p class="card-d">Primary language, by number of repositories</p></div></div>
+        <div class="card-b">${a.langs.length ? donutHTML(a.langs) : `<p class="muted" style="margin:0">No language data for these repositories.</p>`}</div></div>
+      <div class="card"><div class="card-h"><div><h2 class="card-t">Most starred</h2><p class="card-d">Top repositories by stars</p></div></div>
+        <div class="card-b">${emptyRepos ? `<p class="muted" style="margin:0">No public repositories yet.</p>` : barsHTML()}</div></div>
+    </div>
+    ${highlights.length ? `<div><div class="section-label" style="margin-top:4px"><span>Top repositories</span><button class="btn btn-ghost btn-sm" data-tab="repos">See all ${S.repos.length}</button></div>
+      <div class="hl">${highlights.map(repoCardHTML).join('')}</div></div>` : ''}
+    ${S.reposError ? `<p class="muted">Repositories could not be loaded (${esc(S.reposError.body || S.reposError.message)}).</p>` : ''}
+  </div>`;
+}
+function donutHTML(langs) {
+  const total = langs.reduce((s, [, n]) => s + n, 0);
+  let items = langs.slice(0, 6);
+  const rest = langs.slice(6).reduce((s, [, n]) => s + n, 0);
+  if (rest) items.push(['Other', rest]);
+  const R = 52, C = 2 * Math.PI * R; let off = 0;
+  const segs = items.map(([l, n]) => {
+    const len = n / total * C, gap = items.length > 1 ? Math.min(2, len * 0.3) : 0;
+    const s = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${l === 'Other' ? 'hsl(var(--muted-fg) / .45)' : langColor(l)}" stroke-width="18" stroke-dasharray="${Math.max(len - gap, 0.01)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(l)}: ${n} repos</title></circle>`;
+    off += len; return s;
+  }).join('');
+  return `<div class="donut-wrap">
+    <svg width="140" height="140" viewBox="0 0 140 140" role="img" aria-label="Language breakdown">${segs}
+      <text x="70" y="66" text-anchor="middle" style="font:650 22px var(--font-sans);fill:hsl(var(--foreground))">${langs.length}</text>
+      <text x="70" y="84" text-anchor="middle" style="font:12px var(--font-sans);fill:hsl(var(--muted-fg))">languages</text></svg>
+    <ul class="legend">${items.map(([l, n]) => `<li><i style="background:${l === 'Other' ? 'hsl(var(--muted-fg) / .45)' : langColor(l)}"></i><span>${esc(l)}</span><span class="pct">${Math.round(n / total * 100)}%</span></li>`).join('')}</ul>
+  </div>`;
+}
+function barsHTML() {
+  const top = [...S.repos].sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 8);
+  const max = Math.max(1, top[0]?.stargazers_count || 0);
+  return `<div class="bars" role="list">${top.map(r => `
+    <div class="bar-row" role="listitem" tabindex="0" data-repo="${r.id}" title="${esc(r.name)}: ${nf.format(r.stargazers_count)} stars">
+      <span class="bar-name">${esc(r.name)}</span>
+      <span class="bar-track"><span class="bar-fill" style="display:block;width:${Math.max(r.stargazers_count / max * 100, r.stargazers_count ? 1.5 : 0)}%"></span></span>
+      <span class="bar-v">${compact(r.stargazers_count)}</span></div>`).join('')}</div>`;
+}
+const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function eventWeight(e) {
+  if (e.type !== 'PushEvent') return 1;
+  const p = e.payload || {};
+  const n = p.distinct_size ?? p.size ?? (Array.isArray(p.commits) ? p.commits.length : null);
+  return n && n > 0 ? n : 1;
+}
+function heatmapHTML() {
+  if (S.eventsError) return `<p class="muted" style="margin:0">Activity could not be loaded (${esc(S.eventsError.body || S.eventsError.message)}).</p>`;
+  const counts = {}; let commits = 0;
+  S.events.forEach(e => { const k = dayKey(new Date(e.created_at)); const w = eventWeight(e); counts[k] = (counts[k] || 0) + w; if (e.type === 'PushEvent') commits += w; });
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const start = new Date(today); start.setDate(start.getDate() - start.getDay() - (HEAT_WEEKS - 1) * 7);
+  const cell = 12, gap = 3, step = cell + gap, left = 28, topPad = 16;
+  const vals = Object.values(counts); const max = Math.max(0, ...vals);
+  const level = v => !v ? 0 : max <= 4 ? Math.min(v, 4) : v <= max * .25 ? 1 : v <= max * .5 ? 2 : v <= max * .75 ? 3 : 4;
+  let rects = '', months = '', lastM = -1, lastMw = -9, activeDays = 0, best = null;
+  for (let w = 0; w < HEAT_WEEKS; w++) {
+    for (let d = 0; d < 7; d++) {
+      const dt = new Date(start); dt.setDate(start.getDate() + w * 7 + d);
+      if (dt > today) continue;
+      const k = dayKey(dt), v = counts[k] || 0;
+      if (v) { activeDays++; if (!best || v > best.v) best = {v, dt}; }
+      if (d === 0 && dt.getMonth() !== lastM) { lastM = dt.getMonth(); if (w < HEAT_WEEKS - 1 && w - lastMw >= 3 && (lastMw = w) >= 0) months += `<text x="${left + w * step}" y="10">${dt.toLocaleDateString(undefined, {month: 'short'})}</text>`; }
+      rects += `<rect x="${left + w * step}" y="${topPad + d * step}" width="${cell}" height="${cell}" rx="2.5" fill="hsl(var(--heat${level(v)}))"><title>${v ? `${v} contribution${v === 1 ? '' : 's'}` : 'No contributions'} on ${dt.toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'})}</title></rect>`;
+    }
+  }
+  const days = ['', 'Mon', '', 'Wed', '', 'Fri', ''].map((l, i) => l ? `<text x="0" y="${topPad + i * step + 10}">${l}</text>` : '').join('');
+  const W = left + HEAT_WEEKS * step, H = topPad + 7 * step;
+  const total = vals.reduce((s, v) => s + v, 0);
+  return `<div class="heat-sum">
+      <span><b>${nf.format(total)}</b> <span class="muted">contributions</span></span>
+      <span><b>${nf.format(commits)}</b> <span class="muted">commits pushed</span></span>
+      <span><b>${activeDays}</b> <span class="muted">active days</span></span>
+      ${best ? `<span><span class="muted">Busiest:</span> <b>${best.dt.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}</b> <span class="muted">(${best.v})</span></span>` : ''}
+    </div>
+    <div class="heat-scroll"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Contribution heatmap, ${total} contributions in ${HEAT_WEEKS} weeks">${months}${days}${rects}</svg></div>
+    <div class="heat-legend">Less ${[0, 1, 2, 3, 4].map(l => `<i style="background:hsl(var(--heat${l}))"></i>`).join('')} More</div>
+    ${!S.events.length ? `<p class="muted" style="margin:8px 0 0">No public activity in the last 90 days.</p>` : ''}`;
+}
+
+/* ---------- repositories ---------- */
+function repoCardHTML(r) {
+  const topics = (r.topics || []).slice(0, 4);
+  return `<button class="card repo" data-repo="${r.id}" aria-label="Open ${esc(r.name)} details">
+    <div class="repo-h">${icon('book', 15, 'muted')}<span class="repo-n">${esc(r.name)}</span>
+      ${r.fork ? '<span class="badge">Fork</span>' : ''}${r.archived ? '<span class="badge">Archived</span>' : ''}</div>
+    ${r.description ? `<p class="repo-d">${esc(r.description)}</p>` : `<p class="repo-d" style="font-style:italic">No description</p>`}
+    ${topics.length ? `<div class="repo-topics">${topics.map(t => `<span class="topic">${esc(t)}</span>`).join('')}</div>` : ''}
+    <div class="meta">
+      ${r.language ? `<span><i class="ldot" style="background:${langColor(r.language)}"></i>${esc(r.language)}</span>` : ''}
+      <span title="Stars">${icon('star', 13)}<span class="num">${compact(r.stargazers_count)}</span></span>
+      <span title="Forks">${icon('fork', 13)}<span class="num">${compact(r.forks_count)}</span></span>
+      <span title="Last push">${icon('clock', 13)}${r.pushed_at ? ago(r.pushed_at) : 'never pushed'}</span>
+    </div></button>`;
+}
+function reposShellHTML() {
+  const langs = [...new Set(S.repos.map(r => r.language).filter(Boolean))].sort();
+  return `<div class="toolbar">
+      <label class="field"><span class="sr-only">Filter repositories</span>${icon('search', 15)}<input class="input has-icon" id="repo-q" type="search" placeholder="Find a repository…" value="${esc(S.q)}"></label>
+      <label><span class="sr-only">Sort by</span><select class="input" id="repo-sort">
+        <option value="stars"${S.sort === 'stars' ? ' selected' : ''}>Most stars</option>
+        <option value="updated"${S.sort === 'updated' ? ' selected' : ''}>Recently pushed</option>
+        <option value="name"${S.sort === 'name' ? ' selected' : ''}>Name A–Z</option></select></label>
+      <label><span class="sr-only">Language</span><select class="input" id="repo-lang"><option value="">All languages</option>${langs.map(l => `<option${S.lang === l ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <label class="check"><input type="checkbox" id="repo-forks"${S.hideForks ? ' checked' : ''}> Hide forks</label>
+    </div>
+    <p class="result-line" id="repo-count"></p>
+    <div class="repos" id="repo-list"></div>`;
+}
+function renderRepoList() {
+  const q = S.q.toLowerCase();
+  let list = S.repos.filter(r => (!S.lang || r.language === S.lang) && (!S.hideForks || !r.fork) &&
+    (!q || r.name.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q) || (r.topics || []).some(t => t.includes(q))));
+  const sorters = {stars: (a, b) => b.stargazers_count - a.stargazers_count || a.name.localeCompare(b.name),
+    updated: (a, b) => new Date(b.pushed_at || 0) - new Date(a.pushed_at || 0), name: (a, b) => a.name.localeCompare(b.name, undefined, {sensitivity: 'base'})};
+  list.sort(sorters[S.sort]);
+  $('#repo-count').textContent = `Showing ${list.length} of ${S.repos.length} repositories` + (S.reposTruncated ? ` (the first ${S.repos.length} of ${nf.format(S.user.public_repos)} were loaded)` : '');
+  $('#repo-list').innerHTML = list.length ? list.map(repoCardHTML).join('') :
+    `<div style="grid-column:1/-1">${stateBlock({ic: 'search', title: S.repos.length ? 'No repositories match' : 'No public repositories', body: S.repos.length ? 'Try a different keyword, or clear the language and fork filters.' : `${esc(S.user.login)} hasn’t published any repositories yet.`,
+      actions: S.repos.length ? `<div class="chips"><button class="btn btn-outline btn-sm" data-action="clear-filters">Clear filters</button></div>` : ''})}</div>`;
+}
+
+/* ---------- activity ---------- */
+const EV_CATS = [['all', 'All'], ['push', 'Pushes'], ['pr', 'Pull requests'], ['issue', 'Issues'], ['star', 'Stars'], ['release', 'Releases'], ['branch', 'Branches & tags'], ['other', 'Other']];
+function describe(e) {
+  const p = e.payload || {}, repo = e.repo?.name || '';
+  const rl = `<a href="https://github.com/${esc(repo)}" target="_blank" rel="noopener">${esc(repo)}</a>`;
+  const link = (url, txt) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(txt)}</a>`;
+  switch (e.type) {
+    case 'PushEvent': {
+      const n = p.distinct_size ?? p.size ?? (Array.isArray(p.commits) ? p.commits.length : null);
+      const br = (p.ref || '').replace('refs/heads/', '');
+      const commits = Array.isArray(p.commits) ? p.commits.slice(-3).reverse() : [];
+      return {cat: 'push', ic: 'commit', html: `Pushed ${n != null ? `${n} commit${n === 1 ? '' : 's'} ` : ''}to <code>${esc(br || 'a branch')}</code> in ${rl}`,
+        extra: commits.length ? `<ul class="commits">${commits.map(c => `<li class="commit"><a class="mono" href="https://github.com/${esc(repo)}/commit/${esc(c.sha)}" target="_blank" rel="noopener"><code>${esc(c.sha.slice(0, 7))}</code></a><span>${esc((c.message || '').split('\n')[0])}</span></li>`).join('')}</ul>` :
+          (p.head ? `<ul class="commits"><li class="commit"><a href="https://github.com/${esc(repo)}/commit/${esc(p.head)}" target="_blank" rel="noopener"><code>${esc(p.head.slice(0, 7))}</code></a><span>head commit</span></li></ul>` : '')};
+    }
+    case 'PullRequestEvent': {
+      const pr = p.pull_request || {}, num = p.number || pr.number;
+      const act = p.action === 'closed' && pr.merged ? 'Merged' : (p.action || 'updated').replace(/^./, c => c.toUpperCase());
+      return {cat: 'pr', ic: 'pr', html: `${esc(act)} pull request ${link(pr.html_url || `https://github.com/${repo}/pull/${num}`, `#${num}${pr.title ? ' ' + pr.title : ''}`)} in ${rl}`};
+    }
+    case 'PullRequestReviewEvent': { const pr = p.pull_request || {}; return {cat: 'pr', ic: 'pr', html: `Reviewed pull request ${link(pr.html_url || `https://github.com/${repo}/pulls`, `#${pr.number || ''}${pr.title ? ' ' + pr.title : ''}`)} in ${rl}`}; }
+    case 'PullRequestReviewCommentEvent': { const pr = p.pull_request || {}; return {cat: 'pr', ic: 'message', html: `Commented on pull request ${link(p.comment?.html_url || pr.html_url || `https://github.com/${repo}`, `#${pr.number || ''}${pr.title ? ' ' + pr.title : ''}`)} in ${rl}`}; }
+    case 'IssuesEvent': { const is = p.issue || {}; return {cat: 'issue', ic: 'issue', html: `${esc((p.action || 'updated').replace(/^./, c => c.toUpperCase()))} issue ${link(is.html_url || `https://github.com/${repo}/issues`, `#${is.number || ''} ${is.title || ''}`)} in ${rl}`}; }
+    case 'IssueCommentEvent': { const is = p.issue || {}; const kind = is.pull_request ? 'pull request' : 'issue'; return {cat: is.pull_request ? 'pr' : 'issue', ic: 'message', html: `Commented on ${kind} ${link(p.comment?.html_url || is.html_url || `https://github.com/${repo}`, `#${is.number || ''} ${is.title || ''}`)} in ${rl}`}; }
+    case 'WatchEvent': return {cat: 'star', ic: 'star', html: `Starred ${rl}`};
+    case 'ForkEvent': return {cat: 'other', ic: 'fork', html: `Forked ${rl}${p.forkee?.full_name ? ` to ${link('https://github.com/' + p.forkee.full_name, p.forkee.full_name)}` : ''}`};
+    case 'CreateEvent':
+      if (p.ref_type === 'repository') return {cat: 'other', ic: 'book', html: `Created repository ${rl}`};
+      return {cat: 'branch', ic: p.ref_type === 'tag' ? 'tag' : 'branch', html: `Created ${esc(p.ref_type)} <code>${esc(p.ref)}</code> in ${rl}`};
+    case 'DeleteEvent': return {cat: 'branch', ic: p.ref_type === 'tag' ? 'tag' : 'branch', html: `Deleted ${esc(p.ref_type)} <code>${esc(p.ref)}</code> in ${rl}`};
+    case 'ReleaseEvent': { const r = p.release || {}; return {cat: 'release', ic: 'rocket', html: `${esc((p.action || 'published').replace(/^./, c => c.toUpperCase()))} release ${link(r.html_url || `https://github.com/${repo}/releases`, r.name || r.tag_name || 'release')} in ${rl}`}; }
+    case 'PublicEvent': return {cat: 'other', ic: 'book', html: `Made ${rl} public`};
+    case 'MemberEvent': return {cat: 'other', ic: 'users', html: `${esc(p.action || 'Added')} ${esc(p.member?.login || 'a collaborator')} to ${rl}`};
+    case 'GollumEvent': return {cat: 'other', ic: 'book', html: `Updated ${(p.pages || []).length || ''} wiki page${(p.pages || []).length === 1 ? '' : 's'} in ${rl}`};
+    case 'CommitCommentEvent': return {cat: 'other', ic: 'message', html: `Commented on a commit in ${rl}`};
+    default: return {cat: 'other', ic: 'commit', html: `${esc((e.type || 'Event').replace(/Event$/, ''))} in ${rl}`};
+  }
+}
+function activityShellHTML() {
+  const counts = {all: S.events.length};
+  S.events.forEach(e => { const c = describe(e).cat; counts[c] = (counts[c] || 0) + 1; });
+  return `<div class="chips" style="margin-bottom:12px" role="group" aria-label="Filter activity">${EV_CATS.filter(([k]) => k === 'all' || counts[k]).map(([k, l]) =>
+    `<button class="chip" data-evf="${k}" aria-pressed="${S.evFilter === k}">${l} <span class="mono muted" style="font-size:11px">${counts[k] || 0}</span></button>`).join('')}</div>
+    <div class="card"><div class="card-b" style="padding-block:4px"><ul class="feed" id="feed"></ul></div></div>`;
+}
+function renderFeed() {
+  const f = $('#feed'); if (!f) return;
+  if (S.eventsError) { f.innerHTML = `<li>${stateBlock({tone: 'err', title: 'Activity unavailable', body: esc(S.eventsError.body || S.eventsError.message)})}</li>`; return; }
+  const items = S.events.map(e => ({e, d: describe(e)})).filter(x => S.evFilter === 'all' || x.d.cat === S.evFilter);
+  if (!items.length) { f.innerHTML = `<li style="list-style:none">${stateBlock({ic: 'history', title: 'No recent public activity', body: S.events.length ? 'Nothing of this kind in the last 90 days.' : `${esc(S.user.login)} has no public events in the last 90 days.`}).replace('class="card state', 'class="state')}</li>`; return; }
+  f.innerHTML = items.slice(0, 150).map(({e, d}) => `<li class="ev"><span class="ev-i">${icon(d.ic, 15)}</span><div style="min-width:0"><div class="ev-t">${d.html}</div>${d.extra || ''}</div><time class="ev-time" datetime="${esc(e.created_at)}" title="${new Date(e.created_at).toLocaleString()}">${ago(e.created_at)}</time></li>`).join('');
+}
+
+/* ---------- repo sheet ---------- */
+function openRepo(id) {
+  const r = S.repos.find(x => String(x.id) === String(id)); if (!r) return;
+  S.lastFocus = document.activeElement;
+  const sheet = $('#sheet'), ov = $('#overlay');
+  sheet.innerHTML = `
+    <div class="sheet-h">
+      <div style="flex:1;min-width:0">
+        <p class="muted mono" style="margin:0 0 2px;font-size:12.5px">${esc(r.owner.login)} /</p>
+        <h2 id="sheet-title">${esc(r.name)}</h2>
+        ${r.description ? `<p style="margin:6px 0 0" class="muted">${esc(r.description)}</p>` : ''}
+      </div>
+      <button class="btn btn-ghost btn-icon" data-action="close-sheet" aria-label="Close repository details">${icon('x', 18)}</button>
+    </div>
+    <div class="sheet-b">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <a class="btn btn-primary btn-sm" href="${esc(r.html_url)}" target="_blank" rel="noopener">${icon('external', 14)} Open on GitHub</a>
+        ${r.homepage ? `<a class="btn btn-outline btn-sm" href="${esc(/^https?:/i.test(r.homepage) ? r.homepage : 'https://' + r.homepage)}" target="_blank" rel="noopener nofollow">${icon('link', 14)} Website</a>` : ''}
+        ${r.fork ? '<span class="badge" style="align-self:center">Fork</span>' : ''}${r.archived ? '<span class="badge" style="align-self:center">Archived</span>' : ''}
+      </div>
+      ${(r.topics || []).length ? `<div class="repo-topics">${r.topics.map(t => `<span class="topic">${esc(t)}</span>`).join('')}</div>` : ''}
+      <dl class="kv" style="margin:0">
+        <div><dt>Stars</dt><dd class="num">${nf.format(r.stargazers_count)}</dd></div>
+        <div><dt>Forks</dt><dd class="num">${nf.format(r.forks_count)}</dd></div>
+        <div><dt>Watchers</dt><dd class="num" id="sheet-watch">…</dd></div>
+        <div><dt>Open issues</dt><dd class="num">${nf.format(r.open_issues_count)}</dd></div>
+        <div><dt>Language</dt><dd>${r.language ? `<i class="ldot" style="background:${langColor(r.language)}"></i> ${esc(r.language)}` : '—'}</dd></div>
+        <div><dt>License</dt><dd>${esc(r.license?.spdx_id && r.license.spdx_id !== 'NOASSERTION' ? r.license.spdx_id : (r.license?.name || 'None'))}</dd></div>
+        <div><dt>Default branch</dt><dd class="mono">${esc(r.default_branch)}</dd></div>
+        <div><dt>Size</dt><dd class="num">${r.size >= 1024 ? (r.size / 1024).toFixed(1) + ' MB' : r.size + ' KB'}</dd></div>
+        <div><dt>Created</dt><dd>${fmtDate(r.created_at)}</dd></div>
+        <div><dt>Last push</dt><dd title="${r.pushed_at ? new Date(r.pushed_at).toLocaleString() : ''}">${r.pushed_at ? ago(r.pushed_at) : '—'}</dd></div>
+      </dl>
+      <div class="card"><div class="card-h"><h3 class="card-t" style="display:flex;gap:6px;align-items:center">${icon('book', 15)} README</h3></div>
+        <div class="card-b"><div id="readme" class="md"><div class="sk" style="height:18px;width:50%"></div><div class="sk" style="height:12px;margin-top:14px"></div><div class="sk" style="height:12px;margin-top:8px;width:90%"></div><div class="sk" style="height:12px;margin-top:8px;width:75%"></div></div></div></div>
+    </div>`;
+  sheet.hidden = false; ov.hidden = false;
+  requestAnimationFrame(() => { sheet.classList.add('open'); ov.classList.add('open'); });
+  document.body.style.overflow = 'hidden';
+  sheet.querySelector('[data-action="close-sheet"]').focus();
+  // real watcher count lives on the single-repo endpoint
+  gh(`/repos/${r.full_name}`).then(({data}) => { const w = $('#sheet-watch'); if (w) w.textContent = nf.format(data.subscribers_count ?? r.watchers_count); })
+    .catch(() => { const w = $('#sheet-watch'); if (w) w.textContent = nf.format(r.watchers_count); });
+  loadReadme(r);
+}
+// Fallback if the DOMPurify CDN script is blocked: allowlist tags and attributes.
+const SAFE_TAGS = new Set('A ABBR B BLOCKQUOTE BR CODE DD DEL DETAILS DIV DL DT EM H1 H2 H3 H4 H5 H6 HR I IMG KBD LI OL P PICTURE PRE S SAMP SOURCE SPAN STRONG SUB SUMMARY SUP TABLE TBODY TD TFOOT TH THEAD TR UL ARTICLE SECTION'.split(' '));
+const SAFE_ATTRS = new Set(['href', 'src', 'srcset', 'alt', 'title', 'width', 'height', 'align', 'colspan', 'rowspan', 'open', 'media', 'type', 'id', 'class', 'dir', 'lang']);
+function basicSanitize(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const walk = node => [...node.children].forEach(el => {
+    if (!SAFE_TAGS.has(el.tagName)) { if (/^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|FORM|TEMPLATE|SVG|MATH|NOSCRIPT)$/.test(el.tagName)) el.remove(); else { walk(el); el.replaceWith(...el.childNodes); } return; }
+    [...el.attributes].forEach(a => { const n = a.name.toLowerCase(); if (!SAFE_ATTRS.has(n) || /^\s*(javascript|vbscript|data:text)/i.test(a.value)) el.removeAttribute(a.name); });
+    walk(el);
+  });
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+async function loadReadme(r) {
+  const box = () => document.getElementById('readme');
+  try {
+    const {data: html} = await gh(`/repos/${r.full_name}/readme`, {accept: 'application/vnd.github.html', text: true});
+    const el = box(); if (!el) return;
+    const clean = window.DOMPurify ? DOMPurify.sanitize(html, {USE_PROFILES: {html: true}, FORBID_TAGS: ['style', 'form', 'input'], FORBID_ATTR: ['style']}) : basicSanitize(html);
+    const tpl = document.createElement('template'); tpl.innerHTML = clean;
+    const rawBase = `https://raw.githubusercontent.com/${r.full_name}/${r.default_branch}/`;
+    const blobBase = `https://github.com/${r.full_name}/blob/${r.default_branch}/`;
+    const isAbs = s => /^(https?:|data:|mailto:|#)/i.test(s);
+    tpl.content.querySelectorAll('img[src]').forEach(img => { const s = img.getAttribute('src'); if (!isAbs(s)) img.src = rawBase + s.replace(/^\.?\//, ''); img.loading = 'lazy'; });
+    tpl.content.querySelectorAll('a[href]').forEach(a => { const h = a.getAttribute('href'); if (h.startsWith('#')) { a.removeAttribute('href'); return; } if (!isAbs(h)) a.href = blobBase + h.replace(/^\.?\//, ''); a.target = '_blank'; a.rel = 'noopener nofollow'; });
+    el.innerHTML = ''; el.appendChild(tpl.content);
+  } catch (err) {
+    const el = box(); if (!el) return;
+    el.innerHTML = `<p class="muted" style="margin:0">${err.kind === 'notfound' ? 'This repository has no README.' : err.kind === 'rate' ? 'README skipped: the GitHub API limit is used up for this hour.' : 'The README could not be loaded.'}</p>`;
+  }
+}
+function closeSheet(instant) {
+  const sheet = $('#sheet'), ov = $('#overlay');
+  if (sheet.hidden) return;
+  sheet.classList.remove('open'); ov.classList.remove('open');
+  document.body.style.overflow = '';
+  const done = () => { sheet.hidden = true; ov.hidden = true; sheet.innerHTML = ''; };
+  instant ? done() : setTimeout(done, 230);
+  if (!instant && S.lastFocus && document.contains(S.lastFocus)) S.lastFocus.focus();
+}
+
+/* ---------- token dialog ---------- */
+function openToken() {
+  S.lastFocus = document.activeElement;
+  const d = $('#token-dialog'); $('#token-input').value = S.token;
+  $('#token-remove').hidden = !S.token;
+  d.hidden = false; $('#overlay').hidden = false;
+  requestAnimationFrame(() => { d.classList.add('open'); $('#overlay').classList.add('open'); });
+  $('#token-input').focus();
+}
+function closeToken() {
+  const d = $('#token-dialog'); if (d.hidden) return;
+  d.classList.remove('open'); if ($('#sheet').hidden) $('#overlay').classList.remove('open');
+  setTimeout(() => { d.hidden = true; if ($('#sheet').hidden) $('#overlay').hidden = true; }, 200);
+  if (S.lastFocus && document.contains(S.lastFocus)) S.lastFocus.focus();
+}
+function setToken(t) {
+  S.token = t.trim(); S.token ? store.set('gs-token', S.token) : store.del('gs-token');
+  mem.clear();
+  $('#token-btn').classList.toggle('btn-outline', !!S.token);
+  toast(S.token ? 'Token saved. Requests now use your 5,000/hour limit.' : 'Token removed. Browsing anonymously.');
+  closeToken();
+  const cur = getParamUser(); if (cur && !S.user) loadUser(cur, {push: false});
+}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600); }
+
+/* ---------- theme ---------- */
+function isDark() { const a = document.documentElement.getAttribute('data-theme'); return a ? a === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
+function paintThemeIcon() { const b = $('#theme-btn'); b.innerHTML = icon(isDark() ? 'sun' : 'moon', 16); b.setAttribute('aria-label', isDark() ? 'Switch to light mode' : 'Switch to dark mode'); }
+$('#theme-btn').addEventListener('click', () => { const next = isDark() ? 'light' : 'dark'; document.documentElement.setAttribute('data-theme', next); try { localStorage.setItem('gs-theme', next); } catch (e) {} paintThemeIcon(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', paintThemeIcon);
+paintThemeIcon();
+
+/* ---------- events ---------- */
+$('#search-form').addEventListener('submit', e => { e.preventDefault(); const v = $('#q').value.trim(); if (v) { $('#q').blur(); loadUser(v); } });
+$('#token-btn').addEventListener('click', openToken);
+$('#token-btn').classList.toggle('btn-outline', !!S.token);
+$('#token-cancel').addEventListener('click', closeToken);
+$('#token-save').addEventListener('click', () => setToken($('#token-input').value));
+$('#token-remove').addEventListener('click', () => setToken(''));
+$('#token-input').addEventListener('keydown', e => { if (e.key === 'Enter') setToken(e.target.value); });
+$('#overlay').addEventListener('click', () => { closeToken(); closeSheet(); });
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-user],[data-action],[data-tab],[data-repo],[data-evf]');
+  if (!t) return;
+  if (t.dataset.user) { loadUser(t.dataset.user); window.scrollTo({top: 0}); return; }
+  if (t.dataset.tab) { S.tab = t.dataset.tab; renderPanel(); if (t.classList.contains('btn')) $('#tab-' + S.tab)?.focus(); return; }
+  if (t.dataset.repo) { openRepo(t.dataset.repo); return; }
+  if (t.dataset.evf) { S.evFilter = t.dataset.evf; document.querySelectorAll('[data-evf]').forEach(c => c.setAttribute('aria-pressed', c.dataset.evf === S.evFilter)); renderFeed(); return; }
+  const a = t.dataset.action;
+  if (a === 'home') { e.preventDefault(); S.loadId++; setUrl('', true); $('#q').value = ''; renderHome(); }
+  else if (a === 'clear-recent') { S.recent = []; store.set('gs-recent', []); renderDatalist(); renderHome(); }
+  else if (a === 'retry') loadUser(t.dataset.login, {push: false});
+  else if (a === 'token') openToken();
+  else if (a === 'close-sheet') closeSheet();
+  else if (a === 'clear-filters') { S.q = ''; S.lang = ''; S.hideForks = false; renderPanel(); }
+  else if (a === 'copy-link') {
+    const url = shareUrl(S.user.login);
+    navigator.clipboard?.writeText(url).then(() => toast('Link copied: ' + url), () => toast(url)) ?? toast(url);
+  }
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'repo-q') { S.q = e.target.value; renderRepoList(); }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'repo-sort') { S.sort = e.target.value; renderRepoList(); }
+  if (e.target.id === 'repo-lang') { S.lang = e.target.value; renderRepoList(); }
+  if (e.target.id === 'repo-forks') { S.hideForks = e.target.checked; renderRepoList(); }
+});
+document.addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+  if ((e.key === '/' && !typing) || (e.key.toLowerCase() === 'k' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); $('#q').focus(); $('#q').select(); return; }
+  if (e.key === 'Escape') { if (!$('#token-dialog').hidden) closeToken(); else if (!$('#sheet').hidden) closeSheet(); else if (document.activeElement === $('#q')) $('#q').blur(); return; }
+  if (e.target.classList?.contains('bar-row') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openRepo(e.target.dataset.repo); return; }
+  if (e.target.classList?.contains('tab') && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+    const tabs = [...document.querySelectorAll('.tab')]; const i = tabs.indexOf(e.target);
+    const n = tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    S.tab = n.dataset.tab; renderPanel(); $('#tab-' + S.tab).focus();
+  }
+  // simple focus trap for the open sheet / dialog
+  if (e.key === 'Tab') {
+    const box = !$('#token-dialog').hidden ? $('#token-dialog') : !$('#sheet').hidden ? $('#sheet') : null;
+    if (!box) return;
+    const f = [...box.querySelectorAll('a[href],button:not([disabled]),input,select,[tabindex="0"]')].filter(x => !x.hidden && x.offsetParent !== null);
+    if (!f.length) return;
+    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+  }
+});
+
+/* ---------- boot ---------- */
+renderDatalist();
+const initial = getParamUser();
+initial ? loadUser(initial, {push: false}) : renderHome();
+})();
+</script>
+<noscript><p class="wrap">GitScope needs JavaScript to load profiles from the GitHub API.</p></noscript>
+</body>
+</html>
